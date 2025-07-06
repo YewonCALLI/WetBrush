@@ -31,4 +31,10 @@ canvas {
     font-size: 36px;
     font-family: 'Pretendard-Regular', sans-serif;
     cursor: pointer;
+    z-index: 100000;
+}
+
+#initButton:hover {
+    background-color: #000;
+    color: #fff;
 }

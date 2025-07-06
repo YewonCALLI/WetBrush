@@ -1,16 +1,19 @@
 let wetMask;
-let Level = [];
+let Level;
 let img;
 
-// 터치 이전 위치 추적을 위한 변수들
 let prevTouchX = 0;
 let prevTouchY = 0;
 let isFirstTouch = true;
 
-// 최적화를 위한 변수들
-let activePixels = new Set(); // 젖은 픽셀들만 추적
-let needsRedraw = false; // 화면 갱신 필요 여부
-let frameSkip = 0; // 프레임 스킵 카운터
+let dirtyRegions = new Set(); 
+let needsRedraw = false;
+let frameSkip = 0;
+
+const CANVAS_SIZE = 900;
+const BLOCK_SIZE = 64;
+const BLOCKS_PER_ROW = Math.ceil(CANVAS_SIZE / BLOCK_SIZE);
+const BRUSH_SIZE = 60;
 
 function preload(){
   img = loadImage('tissue texture.jpeg')
@@ -19,25 +22,25 @@ function preload(){
 function setup() {
   createCanvas(windowWidth, windowHeight);
   
-  wetMask = createGraphics(900, 900);
+  wetMask = createGraphics(CANVAS_SIZE, CANVAS_SIZE);
   wetMask.clear();
   
-  // 1차원 배열로 변경 (더 빠른 접근)
-  Level = new Float32Array(900 * 900);
+  Level = new Float32Array(CANVAS_SIZE * CANVAS_SIZE);
   
-  // 픽셀 밀도 최적화
   pixelDensity(1);
+  let initButton = document.getElementById('initButton');
+  if (initButton) {
+    initButton.addEventListener('click', resetCanvas);
+  }
 }
 
 function draw() {
   background(255);
   translate(width/2, height/2);
   
-  //이미지 가운데 정렬
-  image(img, -450, -450, 900, 900);
+  image(img, -450, -450, CANVAS_SIZE, CANVAS_SIZE);
   
-  // 젖은 영역이 있을 때만 업데이트
-  if (needsRedraw || activePixels.size > 0) {
+  if (needsRedraw || dirtyRegions.size > 0) {
     drawWetEffect();
     needsRedraw = false;
   }
@@ -46,7 +49,6 @@ function draw() {
     addWetness();
   }
   
-  // 마르는 효과는 3프레임마다 한 번씩만 실행
   frameSkip++;
   if (frameSkip >= 3) {
     dryEffect();
@@ -85,41 +87,57 @@ function addWetness() {
   let localPrevX = prevX - width/2 + 450;
   let localPrevY = prevY - height/2 + 450;
   
-  let brushSize = 60;
+  let speed = Math.sqrt((currentX - prevX) * (currentX - prevX) + (currentY - prevY) * (currentY - prevY));
+  let pressure = speed > 50 ? 0.03 : 0.15 - (speed * 0.12 / 50);
   
-  let speed = dist(currentX, currentY, prevX, prevY);
-  let pressure = map(speed, 0, 50, 0.15, 0.03);
-  pressure = constrain(pressure, 0.03, 0.15);
-  
-  let distance = dist(localCurrentX, localCurrentY, localPrevX, localPrevY);
-  let steps = max(1, Math.floor(distance / 2)); // 스텝 수 줄임
+  let distance = Math.sqrt((localCurrentX - localPrevX) * (localCurrentX - localPrevX) + (localCurrentY - localPrevY) * (localCurrentY - localPrevY));
+  let steps = Math.max(1, Math.floor(distance));
   
   for (let i = 0; i <= steps; i++) {
-    let x = lerp(localPrevX, localCurrentX, i / steps);
-    let y = lerp(localPrevY, localCurrentY, i / steps);
+    let t = i / steps;
+    let x = localPrevX + (localCurrentX - localPrevX) * t;
+    let y = localPrevY + (localCurrentY - localPrevY) * t;
     
-    // 브러시 크기 최적화 - 더 큰 스텝으로 처리
-    for (let dx = -brushSize; dx <= brushSize; dx += 2) {
-      for (let dy = -brushSize; dy <= brushSize; dy += 2) {
-        let px = Math.floor(x + dx);
-        let py = Math.floor(y + dy);
+    applyBrush(x, y, pressure);
+  }
+}
+
+function applyBrush(centerX, centerY, pressure) {
+  let minX = Math.max(0, Math.floor(centerX - BRUSH_SIZE));
+  let maxX = Math.min(CANVAS_SIZE - 1, Math.floor(centerX + BRUSH_SIZE));
+  let minY = Math.max(0, Math.floor(centerY - BRUSH_SIZE));
+  let maxY = Math.min(CANVAS_SIZE - 1, Math.floor(centerY + BRUSH_SIZE));
+  
+  let blockMinX = Math.floor(minX / BLOCK_SIZE);
+  let blockMaxX = Math.floor(maxX / BLOCK_SIZE);
+  let blockMinY = Math.floor(minY / BLOCK_SIZE);
+  let blockMaxY = Math.floor(maxY / BLOCK_SIZE);
+  
+  for (let blockY = blockMinY; blockY <= blockMaxY; blockY++) {
+    for (let blockX = blockMinX; blockX <= blockMaxX; blockX++) {
+      dirtyRegions.add(blockY * BLOCKS_PER_ROW + blockX);
+    }
+  }
+  
+  let brushSizeSquared = BRUSH_SIZE * BRUSH_SIZE;
+  
+  for (let py = minY; py <= maxY; py++) {
+    for (let px = minX; px <= maxX; px++) {
+      let dx = px - centerX;
+      let dy = py - centerY;
+      let distanceSquared = dx*dx + dy*dy;
+      
+      if (distanceSquared <= brushSizeSquared) {
+        let distance = Math.sqrt(distanceSquared);
+        let intensity = 1 - (distance / BRUSH_SIZE);
+        intensity = intensity * intensity;
         
-        if (px >= 0 && px < 900 && py >= 0 && py < 900) {
-          let distance = Math.sqrt(dx*dx + dy*dy);
-          
-          if (distance <= brushSize) {
-            let intensity = 1 - (distance / brushSize);
-            intensity = intensity * intensity; // pow(intensity, 2) 대신
-            
-            let index = py * 900 + px;
-            let newValue = Math.min(1, Level[index] + intensity * pressure);
-            
-            if (newValue > Level[index]) {
-              Level[index] = newValue;
-              activePixels.add(index);
-              needsRedraw = true;
-            }
-          }
+        let index = py * CANVAS_SIZE + px;
+        let newValue = Level[index] + intensity * pressure;
+        
+        if (newValue > Level[index]) {
+          Level[index] = Math.min(1, newValue);
+          needsRedraw = true;
         }
       }
     }
@@ -129,17 +147,29 @@ function addWetness() {
 function drawWetEffect() {
   wetMask.clear();
   
-  // 활성 픽셀만 처리
-  for (let index of activePixels) {
-    let x = index % 900;
-    let y = Math.floor(index / 900);
+
+  for (let blockIndex of dirtyRegions) {
+    let blockX = blockIndex % BLOCKS_PER_ROW;
+    let blockY = Math.floor(blockIndex / BLOCKS_PER_ROW);
     
-    let wetness = Level[index];
-    if (wetness > 0.01) { // 임계값 이하는 무시
-      let darkness = wetness * 40;
-      wetMask.fill(0, 0, 0, darkness);
-      wetMask.noStroke();
-      wetMask.rect(x, y, 2, 2);
+    let startX = blockX * BLOCK_SIZE;
+    let startY = blockY * BLOCK_SIZE;
+    let endX = Math.min(startX + BLOCK_SIZE, CANVAS_SIZE);
+    let endY = Math.min(startY + BLOCK_SIZE, CANVAS_SIZE);
+    
+    for (let y = startY; y < endY; y += 4) {
+      for (let x = startX; x < endX; x += 4) {
+        let index = y * CANVAS_SIZE + x;
+        let wetness = Level[index];
+        
+        //최적화 (4픽셀)
+        if (wetness > 0.01) {
+          let darkness = wetness * 40;
+          wetMask.fill(0, 0, 0, darkness);
+          wetMask.noStroke();
+          wetMask.rect(x, y, 4, 4);
+        }
+      }
     }
   }
   
@@ -150,23 +180,42 @@ function drawWetEffect() {
 }
 
 function dryEffect() {
-  let pixelsToRemove = [];
+  let blocksToRemove = [];
   
-  for (let index of activePixels) {
-    Level[index] -= 0.003;
+  for (let blockIndex of dirtyRegions) {
+    let blockX = blockIndex % BLOCKS_PER_ROW;
+    let blockY = Math.floor(blockIndex / BLOCKS_PER_ROW);
     
-    if (Level[index] <= 0) {
-      Level[index] = 0;
-      pixelsToRemove.push(index);
+    let startX = blockX * BLOCK_SIZE;
+    let startY = blockY * BLOCK_SIZE;
+    let endX = Math.min(startX + BLOCK_SIZE, CANVAS_SIZE);
+    let endY = Math.min(startY + BLOCK_SIZE, CANVAS_SIZE);
+    
+    let hasWetPixels = false;
+    
+    for (let y = startY; y < endY; y += 4) {
+      for (let x = startX; x < endX; x += 4) {
+        let index = y * CANVAS_SIZE + x;
+        Level[index] -= 0.01;
+        
+        if (Level[index] <= 0) {
+          Level[index] = 0;
+        } else {
+          hasWetPixels = true;
+        }
+      }
+    }
+    
+    if (!hasWetPixels) {
+      blocksToRemove.push(blockIndex);
     }
   }
   
-  // 완전히 마른 픽셀 제거
-  for (let index of pixelsToRemove) {
-    activePixels.delete(index);
+  for (let blockIndex of blocksToRemove) {
+    dirtyRegions.delete(blockIndex);
   }
   
-  if (pixelsToRemove.length > 0) {
+  if (blocksToRemove.length > 0) {
     needsRedraw = true;
   }
 }
@@ -187,9 +236,14 @@ function windowResized() {
 
 function keyPressed() {
   if (key === ' ') {
-    // 빠른 초기화
     Level.fill(0);
-    activePixels.clear();
+    dirtyRegions.clear();
     needsRedraw = true;
   }
+}
+
+function resetCanvas() {
+  Level.fill(0);
+  dirtyRegions.clear();
+  needsRedraw = true;
 }
