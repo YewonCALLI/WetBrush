@@ -28,10 +28,6 @@ function setup() {
   Level = new Float32Array(CANVAS_SIZE * CANVAS_SIZE);
   
   pixelDensity(1);
-  let initButton = document.getElementById('initButton');
-  if (initButton) {
-    initButton.addEventListener('click', resetCanvas);
-  }
 }
 
 function draw() {
