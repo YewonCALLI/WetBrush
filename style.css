@@ -34,7 +34,3 @@ canvas {
     z-index: 100000;
 }
 
-#initButton:hover {
-    background-color: #000;
-    color: #fff;
-}

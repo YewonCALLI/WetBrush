@@ -218,12 +218,12 @@ function dryEffect() {
 
 function touchStarted() {
   isFirstTouch = true;
-  return false; 
+
 }
 
 function touchEnded() {
   isFirstTouch = true;
-  return false; 
+
 }
 
 function windowResized() {
