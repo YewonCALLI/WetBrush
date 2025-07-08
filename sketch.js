@@ -10,31 +10,33 @@ let dirtyRegions = new Set();
 let needsRedraw = false;
 let frameSkip = 0;
 
-const CANVAS_SIZE = 900;
 const BLOCK_SIZE = 64;
-const BLOCKS_PER_ROW = Math.ceil(CANVAS_SIZE / BLOCK_SIZE);
+let BLOCKS_PER_ROW;
 const BRUSH_SIZE = 60;
 
 function preload(){
-  img = loadImage('tissue texture.jpeg')
+  img = loadImage('tissue.jpg')
 }
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
   
-  wetMask = createGraphics(CANVAS_SIZE, CANVAS_SIZE);
+  // 화면 크기에 맞춰 블록 개수 계산
+  BLOCKS_PER_ROW = Math.ceil(windowWidth / BLOCK_SIZE);
+  
+  wetMask = createGraphics(windowWidth, windowHeight);
   wetMask.clear();
   
-  Level = new Float32Array(CANVAS_SIZE * CANVAS_SIZE);
+  Level = new Float32Array(windowWidth * windowHeight);
   
   pixelDensity(1);
 }
 
 function draw() {
   background(255);
-  translate(width/2, height/2);
   
-  image(img, -450, -450, CANVAS_SIZE, CANVAS_SIZE);
+  // 이미지를 전체 화면에 표시
+  image(img, 0, 0, windowWidth, windowHeight);
   
   if (needsRedraw || dirtyRegions.size > 0) {
     drawWetEffect();
@@ -78,10 +80,11 @@ function addWetness() {
     prevY = pmouseY;
   }
   
-  let localCurrentX = currentX - width/2 + 450;
-  let localCurrentY = currentY - height/2 + 450;
-  let localPrevX = prevX - width/2 + 450;
-  let localPrevY = prevY - height/2 + 450;
+  // 좌표 변환 제거 (이미 화면 좌표계와 일치)
+  let localCurrentX = currentX;
+  let localCurrentY = currentY;
+  let localPrevX = prevX;
+  let localPrevY = prevY;
   
   let speed = Math.sqrt((currentX - prevX) * (currentX - prevX) + (currentY - prevY) * (currentY - prevY));
   let pressure = speed > 50 ? 0.03 : 0.15 - (speed * 0.12 / 50);
@@ -100,9 +103,9 @@ function addWetness() {
 
 function applyBrush(centerX, centerY, pressure) {
   let minX = Math.max(0, Math.floor(centerX - BRUSH_SIZE));
-  let maxX = Math.min(CANVAS_SIZE - 1, Math.floor(centerX + BRUSH_SIZE));
+  let maxX = Math.min(windowWidth - 1, Math.floor(centerX + BRUSH_SIZE));
   let minY = Math.max(0, Math.floor(centerY - BRUSH_SIZE));
-  let maxY = Math.min(CANVAS_SIZE - 1, Math.floor(centerY + BRUSH_SIZE));
+  let maxY = Math.min(windowHeight - 1, Math.floor(centerY + BRUSH_SIZE));
   
   let blockMinX = Math.floor(minX / BLOCK_SIZE);
   let blockMaxX = Math.floor(maxX / BLOCK_SIZE);
@@ -128,7 +131,7 @@ function applyBrush(centerX, centerY, pressure) {
         let intensity = 1 - (distance / BRUSH_SIZE);
         intensity = intensity * intensity;
         
-        let index = py * CANVAS_SIZE + px;
+        let index = py * windowWidth + px;
         let newValue = Level[index] + intensity * pressure;
         
         if (newValue > Level[index]) {
@@ -143,22 +146,20 @@ function applyBrush(centerX, centerY, pressure) {
 function drawWetEffect() {
   wetMask.clear();
   
-
   for (let blockIndex of dirtyRegions) {
     let blockX = blockIndex % BLOCKS_PER_ROW;
     let blockY = Math.floor(blockIndex / BLOCKS_PER_ROW);
     
     let startX = blockX * BLOCK_SIZE;
     let startY = blockY * BLOCK_SIZE;
-    let endX = Math.min(startX + BLOCK_SIZE, CANVAS_SIZE);
-    let endY = Math.min(startY + BLOCK_SIZE, CANVAS_SIZE);
+    let endX = Math.min(startX + BLOCK_SIZE, windowWidth);
+    let endY = Math.min(startY + BLOCK_SIZE, windowHeight);
     
     for (let y = startY; y < endY; y += 4) {
       for (let x = startX; x < endX; x += 4) {
-        let index = y * CANVAS_SIZE + x;
+        let index = y * windowWidth + x;
         let wetness = Level[index];
         
-        //최적화 (4픽셀)
         if (wetness > 0.01) {
           let darkness = wetness * 40;
           wetMask.fill(0, 0, 0, darkness);
@@ -171,7 +172,7 @@ function drawWetEffect() {
   
   push();
   blendMode(MULTIPLY);
-  image(wetMask, -450, -450);
+  image(wetMask, 0, 0);
   pop();
 }
 
@@ -184,14 +185,14 @@ function dryEffect() {
     
     let startX = blockX * BLOCK_SIZE;
     let startY = blockY * BLOCK_SIZE;
-    let endX = Math.min(startX + BLOCK_SIZE, CANVAS_SIZE);
-    let endY = Math.min(startY + BLOCK_SIZE, CANVAS_SIZE);
+    let endX = Math.min(startX + BLOCK_SIZE, windowWidth);
+    let endY = Math.min(startY + BLOCK_SIZE, windowHeight);
     
     let hasWetPixels = false;
     
     for (let y = startY; y < endY; y += 4) {
       for (let x = startX; x < endX; x += 4) {
-        let index = y * CANVAS_SIZE + x;
+        let index = y * windowWidth + x;
         Level[index] -= 0.01;
         
         if (Level[index] <= 0) {
@@ -218,16 +219,22 @@ function dryEffect() {
 
 function touchStarted() {
   isFirstTouch = true;
-
 }
 
 function touchEnded() {
   isFirstTouch = true;
-
 }
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
+  
+  // 화면 크기가 변경될 때 재초기화
+  BLOCKS_PER_ROW = Math.ceil(windowWidth / BLOCK_SIZE);
+  wetMask = createGraphics(windowWidth, windowHeight);
+  wetMask.clear();
+  Level = new Float32Array(windowWidth * windowHeight);
+  dirtyRegions.clear();
+  needsRedraw = true;
 }
 
 function keyPressed() {
@@ -236,10 +243,4 @@ function keyPressed() {
     dirtyRegions.clear();
     needsRedraw = true;
   }
-}
-
-function resetCanvas() {
-  Level.fill(0);
-  dirtyRegions.clear();
-  needsRedraw = true;
 }
